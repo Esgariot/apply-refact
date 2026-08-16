@@ -37,6 +37,9 @@ import Data.Generics (everywhere, everywhereM, extM, listify, mkM, mkQ, mkT, som
 import Data.Generics.Uniplate.Data (transformBi, transformBiM)
 import Data.IORef.Extra
 import Data.List.Extra
+#if MIN_VERSION_ghc(9,14,0)
+import Data.List.NonEmpty (NonEmpty (..))
+#endif
 import Data.Maybe (catMaybes, fromMaybe, listToMaybe, mapMaybe)
 import Data.Ord (comparing)
 import Data.Tuple.Extra
@@ -85,6 +88,7 @@ import Refact.Compat
     FlagSpec (..),
     FunBind,
     Module,
+    OnOff (..),
     ReplaceWorker,
 
     combineSrcSpansA,
@@ -118,7 +122,6 @@ import Refact.Compat
 
 #if MIN_VERSION_ghc(9,4,0)
     mkGeneratedHsDocString,
-    initParserOpts,
 #else
 #endif
     AnnConstraint
@@ -610,7 +613,9 @@ stripLocalBind = \case
     | let origMG = GHC.fun_matches origBind,
       GHC.L locMG [GHC.L locMatch origMatch] <- GHC.mg_alts origMG,
       let origGRHSs = GHC.m_grhss origMatch,
-#if MIN_VERSION_ghc(9,12,0)
+#if MIN_VERSION_ghc(9,14,0)
+      (GHC.L loc2 _ :| []) <- GHC.grhssGRHSs origGRHSs ->
+#elif MIN_VERSION_ghc(9,12,0)
       [GHC.L loc2 _] <- GHC.grhssGRHSs origGRHSs ->
 #else
       [GHC.L _ (GHC.GRHS _ _ (GHC.L loc2 _))] <- GHC.grhssGRHSs origGRHSs ->
@@ -824,16 +829,12 @@ addExtensionsToFlags ::
   IO (Either String GHC.DynFlags)
 addExtensionsToFlags es ds fp flags = catchErrors $ do
   (stringToStringBuffer -> buf) <- readFileUTF8' fp
-#if MIN_VERSION_ghc(9,4,0)
-  let (_, opts) = getOptions (initParserOpts flags) buf fp
-#else
   let opts = getOptions flags buf fp
-#endif
       withExts =
         flip (foldl' xopt_unset) ds
           . flip (foldl' xopt_set) es
           $ flags
-  (withPragmas, _, _) <- parseDynamicFilePragma withExts opts
+  withPragmas <- parseDynamicFilePragma withExts opts
   pure . Right $ withPragmas `gopt_set` GHC.Opt_KeepRawTokenStream
   where
     catchErrors =
@@ -888,8 +889,8 @@ parseExtensions = addImplied . foldl' f mempty
     addImplied :: ([Extension], [Extension], [String]) -> ([Extension], [Extension], [String])
     addImplied (ys, ns, is) = (ys ++ impliedOn, ns ++ impliedOff, is)
       where
-        impliedOn = [b | ext <- ys, (a, True, b) <- impliedXFlags, a == ext]
-        impliedOff = [b | ext <- ys, (a, False, b) <- impliedXFlags, a == ext]
+        impliedOn = [b | ext <- ys, (a, On b) <- impliedXFlags, a == ext]
+        impliedOff = [b | ext <- ys, (a, Off b) <- impliedXFlags, a == ext]
 
 readExtension :: String -> Maybe Extension
 readExtension s = flagSpecFlag <$> find ((== s) . flagSpecName) xFlags
