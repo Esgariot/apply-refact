@@ -1,3 +1,5 @@
+{-# LANGUAGE CPP #-}
+
 module Main where
 
 import Options.Applicative
@@ -22,7 +24,11 @@ main =
 testDir = "tests/examples"
 
 expectedFailures :: [FilePath]
-expectedFailures = map (testDir </>) ["lambda42.hs"]
+expectedFailures = map (testDir </>) $
+  ["lambda42.hs"]
+#if MIN_VERSION_ghc(9,14,0)
+  ++ ["Async.hs"]
+#endif
 
 findTests :: IO [FilePath]
 findTests = findByExtension [".hs"] testDir

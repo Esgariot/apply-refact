@@ -17,6 +17,7 @@ module Refact.Compat (
   -- * DynFlags / GHC.Driver.Session
   FlagSpec (..),
   GeneralFlag (..),
+  OnOff (..),
   gopt_set,
   gopt_unset,
   parseDynamicFilePragma,
@@ -121,18 +122,27 @@ import GHC.Data.FastString (FastString, mkFastString)
 #if MIN_VERSION_ghc(9,4,0)
 import qualified GHC.Data.Strict as Strict
 #endif
-import GHC.Data.StringBuffer (stringToStringBuffer)
+import GHC.Data.StringBuffer (StringBuffer, stringToStringBuffer)
 #if MIN_VERSION_ghc(9,4,0)
 import GHC.Driver.Config.Parser
 import GHC.Driver.Errors.Types (ErrorMessages, ghcUnknownMessage, GhcMessage)
 #endif
-import GHC.Driver.Session hiding (initDynFlags)
-#if MIN_VERSION_ghc(9,6,0)
+#if MIN_VERSION_ghc(9,14,0)
+import GHC.Driver.Session hiding (initDynFlags, parseDynamicFilePragma)
+import qualified GHC.Driver.Session as Session (parseDynamicFilePragma)
+#else
+import GHC.Driver.Session hiding (initDynFlags, impliedXFlags, parseDynamicFilePragma)
+import qualified GHC.Driver.Session as Session (impliedXFlags, parseDynamicFilePragma)
+import GHC.LanguageExtensions.Type (Extension)
+#endif
+#if MIN_VERSION_ghc(9,14,0)
+import GHC.Hs hiding (Pat, Stmt, parseModuleName)
+#elif MIN_VERSION_ghc(9,6,0)
 import GHC.Hs hiding (Pat, Stmt, parseModuleName, ann)
 #else
 import GHC.Hs hiding (Pat, Stmt, ann)
 #endif
-import GHC.Parser.Header (getOptions)
+import qualified GHC.Parser.Header as Header (getOptions)
 #if MIN_VERSION_ghc(9,8,0)
 import GHC.Types.Error (defaultDiagnosticOpts, getMessages)
 #elif MIN_VERSION_ghc(9,4,0)
@@ -147,6 +157,9 @@ import GHC.Types.SourceText
 import GHC.Utils.Error
 #else
 import GHC.Utils.Error hiding (mkErr)
+#endif
+#if MIN_VERSION_ghc(9,14,0)
+import GHC.Utils.Logger (initLogger)
 #endif
 import GHC.Utils.Outputable
   ( ppr,
@@ -327,3 +340,41 @@ ann ls = GHC.anns ls
 ann :: SrcSpanAnn' a -> a
 ann = GHC.ann
 #endif
+
+#if MIN_VERSION_ghc(9,6,0)
+#else
+data OnOff a = On a | Off a
+#endif
+
+#if MIN_VERSION_ghc(9,14,0)
+#else
+impliedXFlags :: [(Extension, OnOff Extension)]
+impliedXFlags =
+  [ (flag, if turnOn then On implied else Off implied)
+  | (flag, turnOn, implied) <- Session.impliedXFlags
+  ]
+#endif
+
+-- | The @LANGUAGE@ and @OPTIONS_GHC@ pragmas of a source file. Parse
+-- diagnostics returned alongside them are discarded.
+getOptions :: DynFlags -> StringBuffer -> FilePath -> [Located String]
+#if MIN_VERSION_ghc(9,14,0)
+getOptions flags buf fp =
+  snd $ Header.getOptions (initParserOpts flags) (supportedLanguagePragmas flags) buf fp
+#elif MIN_VERSION_ghc(9,4,0)
+getOptions flags buf fp = snd $ Header.getOptions (initParserOpts flags) buf fp
+#else
+getOptions = Header.getOptions
+#endif
+
+-- | Apply a source file's pragma options to the flags. The unconsumed
+-- arguments and warnings are discarded.
+parseDynamicFilePragma :: DynFlags -> [Located String] -> IO DynFlags
+parseDynamicFilePragma flags opts = do
+#if MIN_VERSION_ghc(9,14,0)
+  logger <- initLogger
+  (flags', _, _) <- Session.parseDynamicFilePragma logger flags opts
+#else
+  (flags', _, _) <- Session.parseDynamicFilePragma flags opts
+#endif
+  pure flags'
